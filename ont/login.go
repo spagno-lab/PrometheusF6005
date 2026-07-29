@@ -9,6 +9,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type LoginResponse struct {
@@ -18,9 +19,12 @@ type LoginResponse struct {
 
 func Login(endpoint, username, password string) (*Session, error) {
 	jar, _ := cookiejar.New(nil)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	session := &Session{
 		Client: &http.Client{
-			Jar: jar,
+			Jar:       jar,
+			Timeout:   15 * time.Second,
+			Transport: transport,
 		},
 		Endpoint: endpoint,
 	}
@@ -28,13 +32,13 @@ func Login(endpoint, username, password string) (*Session, error) {
 	// Get session token
 	sessionToken, err := session.GetSessionToken()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	// Get login token
 	loginToken, err := session.GetLoginToken()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	preparedHash := sha256.New()
@@ -49,7 +53,7 @@ func Login(endpoint, username, password string) (*Session, error) {
 
 	resp, err := session.Post(endpoint+"/?_type=loginData&_tag=login_entry", "application/x-www-form-urlencoded; charset=UTF-8", strings.NewReader(payload.Encode()))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -59,7 +63,11 @@ func Login(endpoint, username, password string) (*Session, error) {
 	}
 
 	if result.LoginNeedRefresh {
-		_, _ = session.Get(endpoint + "/")
+		refresh, err := session.Get(endpoint + "/")
+		if err != nil {
+			return nil, err
+		}
+		_ = refresh.Body.Close()
 		return session, nil
 	}
 	return nil, errors.New("failed to login")

@@ -29,7 +29,7 @@ type DeviceInfo struct {
 }
 
 func (s *Session) LoadDeviceInfo() (*DeviceInfo, error) {
-	_, _ = s.Get(s.Endpoint + "/?_type=menuView&_tag=statusMgr&Menu3Location=0&_=" + strconv.FormatInt(time.Now().Unix(), 10))
+	s.getAndClose(s.Endpoint + "/?_type=menuView&_tag=statusMgr&Menu3Location=0&_=" + strconv.FormatInt(time.Now().Unix(), 10))
 	resp, err := s.Get(s.Endpoint + "/?_type=menuData&_tag=devmgr_statusmgr_lua.lua&_=" + strconv.FormatInt(time.Now().Unix(), 10))
 	if err != nil {
 		return nil, err

@@ -32,7 +32,7 @@ type LanInfo struct {
 }
 
 func (s *Session) LoadLanInfo() (*LanInfo, error) {
-	_, _ = s.Get(s.Endpoint + "/?_type=menuView&_tag=localNetStatus&Menu3Location=0&_" + strconv.FormatInt(time.Now().Unix(), 10))
+	s.getAndClose(s.Endpoint + "/?_type=menuView&_tag=localNetStatus&Menu3Location=0&_" + strconv.FormatInt(time.Now().Unix(), 10))
 	resp, err := s.Get(s.Endpoint + "/?_type=menuData&_tag=status_lan_info_lua.lua&_=" + strconv.FormatInt(time.Now().Unix(), 10))
 	if err != nil {
 		return nil, err

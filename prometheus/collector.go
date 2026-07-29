@@ -2,23 +2,37 @@ package prometheus
 
 import (
 	"PrometheusF6005/ont"
-	"cmp"
+	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"log"
-	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
 // ONTCollector implements the prometheus.Collector interface
 type ONTCollector struct {
-	session *ont.Session
+	mu       sync.Mutex
+	session  *ont.Session
+	endpoint string
+	username string
+	password string
+	loginFn  func(string, string, string) (*ont.Session, error)
+	now      func() time.Time
+
+	reloginDelay time.Duration
+	nextLoginAt  time.Time
 }
 
 // NewONTCollector creates a new ONT metrics collector
-func NewONTCollector(session *ont.Session) *ONTCollector {
+func NewONTCollector(endpoint, username, password string, reloginDelay time.Duration) *ONTCollector {
 	return &ONTCollector{
-		session: session,
+		endpoint:     endpoint,
+		username:     username,
+		password:     password,
+		loginFn:      ont.Login,
+		now:          time.Now,
+		reloginDelay: reloginDelay,
 	}
 }
 
@@ -42,22 +56,51 @@ func (c *ONTCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- opticalUptimeDesc
 }
 
-func sleepQuit(reaason string) {
-	sleepTimeString := cmp.Or(os.Getenv("ONT_SLEEP_QUIT"), "60")
-	sleepTime, _ := strconv.Atoi(sleepTimeString)
+func (c *ONTCollector) login() error {
+	if c.now().Before(c.nextLoginAt) {
+		return fmt.Errorf("waiting until %s before refreshing the ONT session", c.nextLoginAt.Format(time.RFC3339))
+	}
 
-	log.Printf("[SleepQuit] %s, sleeping for %d seconds before quitting...\n", reaason, sleepTime)
-	time.Sleep(time.Duration(sleepTime) * time.Second)
-	log.Println("[SleepQuit] Sleep time is over, exiting...")
-	os.Exit(1)
+	session, err := c.loginFn(c.endpoint, c.username, c.password)
+	if err != nil {
+		return err
+	}
+	c.session = session
+	c.nextLoginAt = time.Time{}
+	log.Println("Login succeeded")
+	return nil
+}
+
+func loadWithRelogin[T any](c *ONTCollector, load func(*ont.Session) (*T, error)) (*T, error) {
+	if c.session == nil {
+		if err := c.login(); err != nil {
+			return nil, err
+		}
+	}
+
+	result, err := load(c.session)
+	if err == nil {
+		return result, nil
+	}
+
+	log.Printf("ONT request failed (%v), scheduling a new session in %s", err, c.reloginDelay)
+	if c.session.Client != nil {
+		c.session.CloseIdleConnections()
+	}
+	c.session = nil
+	c.nextLoginAt = c.now().Add(c.reloginDelay)
+	return nil, err
 }
 
 // Collect implements prometheus.Collector
 func (c *ONTCollector) Collect(ch chan<- prometheus.Metric) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	// Collect Device Info
-	deviceInfo, err := c.session.LoadDeviceInfo()
+	deviceInfo, err := loadWithRelogin(c, (*ont.Session).LoadDeviceInfo)
 	if err != nil {
-		sleepQuit(err.Error())
+		log.Printf("Unable to collect device info: %v", err)
 		return
 	}
 
@@ -118,9 +161,9 @@ func (c *ONTCollector) Collect(ch chan<- prometheus.Metric) {
 	)
 
 	// Collect LAN Info
-	lanInfo, err := c.session.LoadLanInfo()
+	lanInfo, err := loadWithRelogin(c, (*ont.Session).LoadLanInfo)
 	if err != nil {
-		sleepQuit(err.Error())
+		log.Printf("Unable to collect LAN info: %v", err)
 		return
 	}
 	// Network traffic metrics
@@ -205,9 +248,9 @@ func (c *ONTCollector) Collect(ch chan<- prometheus.Metric) {
 	)
 
 	// Collect Optical Info
-	opticalInfo, err := c.session.LoadOpticalData()
+	opticalInfo, err := loadWithRelogin(c, (*ont.Session).LoadOpticalData)
 	if err != nil {
-		sleepQuit(err.Error())
+		log.Printf("Unable to collect optical info: %v", err)
 		return
 	}
 	// Signal power metrics
