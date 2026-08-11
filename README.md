@@ -2,6 +2,9 @@
 
 A theoretically simple way to export metrics from your ZTE F6005v3 ONT to Prometheus.
 
+Dependency updates inherit the shared `spagno-lab/renovate-config` policy;
+project-specific exceptions remain in `renovate.json`.
+
 ## Required environment variables
 
 | Name             | Description                  | Default Value      |
